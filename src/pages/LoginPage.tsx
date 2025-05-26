@@ -10,16 +10,22 @@ export const LoginPage = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(''); // Reset error message before trying login
+    setError('');
 
-    // Attempt to login
+    console.log('Logging in with:', credentials);
+
     const success = await login(credentials.username, credentials.password);
 
     if (success) {
-      // Redirect to admin page on successful login
-      navigate('/admin');
+      const user = useAuthStore.getState().currentUser;
+      console.log('Logged in user:', user);
+
+      if (user?.role === 'admin') {
+        navigate('/admin'); 
+      } else {
+        navigate('/profile'); 
+      }
     } else {
-      // Show error message if credentials are invalid
       setError('Invalid username or password');
     }
   };
@@ -29,7 +35,6 @@ export const LoginPage = () => {
       <div className="bg-white p-8 rounded-lg shadow-md w-96">
         <h1 className="text-2xl font-bold mb-6">Admin Login</h1>
 
-        {/* Display error message if login fails */}
         {error && (
           <div className="bg-red-100 text-red-700 p-3 rounded mb-4">
             {error}
@@ -72,4 +77,8 @@ export const LoginPage = () => {
     </div>
   );
 };
+
+
+
+
 

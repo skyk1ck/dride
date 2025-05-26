@@ -1,117 +1,89 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react'; 
+import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../store/authStore';
+import { useNewsStore } from '../store/newsStore';
+import { useThemeStore } from '../store/themeStore';
 import { Trash2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom'; // Updated import for React Router v6
-import { useAuthStore } from '../store/authStore'; // Assuming JWT token is stored here
-import { useNewsStore } from '../store/newsStore'; // News store to manage news
-import { useThemeStore } from '../store/themeStore'; // For dark mode
+import axios from 'axios';
 
 export const NewsPage = () => {
-  const { news, setNews, error } = useNewsStore();  // Added error state
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated); // Check if the user is authenticated (boolean)
-  const token = useAuthStore((state) => state.getAuthToken()); // Retrieve token from auth store
-  const isAdmin = useAuthStore((state) => state.currentUser?.role === 'admin'); // Check if user is an admin
-  const isDarkMode = useThemeStore((state) => state.isDarkMode); // Get dark mode state
+  const { news, setNews, error, setError, addNews, deleteNews } = useNewsStore();
+  const { isAuthenticated, fetchUserRole, currentUser, checkAuthToken, initializeAuth } = useAuthStore();
+  const isDarkMode = useThemeStore((state) => state.isDarkMode);
+  const navigate = useNavigate();
+
   const [newNews, setNewNews] = useState({ title: '', content: '' });
-  const [loading, setLoading] = useState(true); // Loading state
-  const navigate = useNavigate(); // Updated for navigation
+  const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  // Fetch news data when component mounts or when token changes
-  useEffect(() => {
-    if (!isAuthenticated) {  // Check if user is not authenticated
-      navigate('/login'); // Redirect to login page if not authenticated
-    }
-
-    const fetchNews = async () => {
-      try {
-        if (!token) {
-          console.error('No token found');
-          return;
-        }
-
-        const response = await fetch('http://localhost:5000/api/news', {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`, // Attach token in the header
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Error fetching news');
-        }
-
-        const newsData = await response.json();
-        setNews(newsData);
-      } catch (error) {
-        console.error('Failed to fetch news:', error);
-        setNews([]);  // Reset news to empty on error
-      } finally {
-        setLoading(false); // Set loading to false when data is fetched
-      }
-    };
-
-    fetchNews();
-  }, [token, setNews, navigate, isAuthenticated]); // Depend on token and isAuthenticated
-
-  // Handle adding new news
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (newNews.title && newNews.content) {
-      try {
-        if (!token) {
-          console.error('No token found');
-          return;
-        }
-
-        const response = await axios.post('http://localhost:5000/api/news', newNews, {
-          headers: {
-            'Authorization': `Bearer ${token}`, // Add token in the Authorization header
-          },
-        });
-
-        setNews((prevNews) => [
-          ...prevNews,
-          { ...newNews, id: response.data.id, created_at: new Date().toISOString() }, // Add response ID
-        ]);
-        setNewNews({ title: '', content: '' });
-      } catch (error) {
-        console.error('Error adding news:', error);
-        // Optionally handle error with state, e.g., setError('Failed to add news')
-      }
-    }
-  };
-
-  // Handle deleting news
-  const handleDelete = async (id) => {
+  const fetchNews = async () => {
     try {
-      if (!token) {
-        console.error('No token found');
-        return;
-      }
-
-      const response = await fetch(`http://localhost:5000/api/news/${id}`, {
-        method: 'DELETE',
+      const response = await axios.get('http://localhost:5000/api/news', {
         headers: {
-          'Authorization': `Bearer ${token}`, // Send token in the Authorization header
           'Content-Type': 'application/json',
         },
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setNews((prevNews) => prevNews.filter((item) => item.id !== id));
-      } else {
-        console.error('Error deleting news:', data.error);
-      }
+      setNews(response.data);
     } catch (error) {
-      console.error('Error deleting news:', error);
+      console.error('Failed to fetch news:', error);
+      setError('Failed to fetch news');
+      setNews([]); 
+    } finally {
+      setLoading(false);
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+  
+    if (newNews.title && newNews.content) {
+      try {
+        await addNews(newNews);
+        setError(null);
+        setNewNews({ title: '', content: '' });
+        await fetchNews();
+      } catch (error) {
+        const errorMessage = error.response?.data?.error || error.message;
+        setError(`Error adding news: ${errorMessage}`);
+        console.error('Error adding news:', errorMessage);
+      }
+    } else {
+      setError('Please fill out both the title and content.');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteNews(id);
+      await axios.delete(`http://localhost:5000/api/news/${id}`);
+    } catch (error) {
+      setError('Error deleting news');
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      initializeAuth();
+    }
+
+    if (!checkAuthToken()) {
+      navigate('/login');
+      return;
+    }
+
+    if (currentUser) {
+      const userRole = fetchUserRole();
+      if (userRole === 'admin') {
+        setIsAdmin(true);
+      }
+      fetchNews();
+    } else {
+      navigate('/login');
+    }
+  }, [isAuthenticated, currentUser, checkAuthToken, navigate, initializeAuth, fetchUserRole]);
+
   if (loading) {
-    return <div>Loading...</div>; // Optionally add a loading spinner here
+    return <div>Loading...</div>;
   }
 
   return (
@@ -149,38 +121,82 @@ export const NewsPage = () => {
           </form>
         )}
 
-        {error && (
-          <div className="mb-4 text-red-500">{error}</div> // Display error if there is one
-        )}
+        {error && <div className="text-red-500 mb-4">{error}</div>}
 
         <div className="space-y-6">
-          {news.map((item) => (
-            <div
-              key={item.id} // Use item.id directly for uniqueness
-              className={`p-6 rounded-lg shadow-md ${isDarkMode ? 'bg-black border border-gray-800' : 'bg-white'}`}
-            >
-              <div className="flex justify-between items-start">
-                <h2 className="text-xl font-semibold">{item.title}</h2>
-                {isAdmin && (
-                  <button
-                    onClick={() => handleDelete(item.id)}
-                    className="text-red-600 hover:text-red-800"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
-              <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mt-2`}>
-                {new Date(item.created_at).toLocaleDateString()}
-              </p>
-              <p className="mt-4">{item.content}</p>
+          {news.length === 0 ? (
+            <div className="text-center text-lg font-semibold text-gray-500">
+              No News Available
             </div>
-          ))}
+          ) : (
+            news.map((item) => (
+              <div
+                key={item.id}
+                className={`p-6 rounded-lg shadow-md ${isDarkMode ? 'bg-black border border-gray-800' : 'bg-white'}`}
+              >
+                <div className="flex justify-between items-start">
+                  <h2 className="text-xl font-semibold">{item.title}</h2>
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      className="text-red-600 hover:text-red-800"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
+                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mt-2`}>
+                  {new Date(item.date).toLocaleDateString()}
+                </p>
+                <p className="mt-4">{item.content}</p>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
   );
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

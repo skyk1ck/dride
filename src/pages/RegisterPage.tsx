@@ -16,7 +16,7 @@ export const RegisterPage = () => {
     e.preventDefault();
     setError('');
 
-    // Проверки на стороне клиента
+    
     if (!formData.email.includes('@')) {
       setError('Please enter a valid email address');
       return;
@@ -28,7 +28,7 @@ export const RegisterPage = () => {
     }
 
     try {
-      // Отправка данных на сервер
+     
       const response = await axios.post('http://localhost:5000/api/register', {
         username: formData.username,
         email: formData.email,
@@ -36,10 +36,10 @@ export const RegisterPage = () => {
       });
 
       if (response.status === 201) {
-        navigate('/user/login'); // Переход на страницу логина при успешной регистрации
+        navigate('/user/login'); 
       }
     } catch (err: any) {
-      // Обработка ошибок от сервера
+      
       if (err.response && err.response.data && err.response.data.error) {
         setError(err.response.data.error);
       } else {

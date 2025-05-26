@@ -20,8 +20,17 @@ export const UserLoginPage = () => {
         password: credentials.password,
       });
 
-      // Check if the login was successful
+      // Log the response to debug
+      console.log('Login Response:', response.data);
+
+      // Check if the login was successful and we have the token
       if (response.data.token) {
+        // If the user is an admin, show "Invalid credentials" message
+        if (response.data.user.role === 'admin') {
+          setError('Invalid credentials');
+          return; // Prevent further login for admin
+        }
+
         // Store JWT token in localStorage
         localStorage.setItem('token', response.data.token);
 
@@ -96,6 +105,8 @@ export const UserLoginPage = () => {
     </div>
   );
 };
+
+
 
 
 

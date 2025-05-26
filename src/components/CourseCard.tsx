@@ -1,3 +1,4 @@
+// components/CourseCard.tsx
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Course } from '../types';
@@ -5,7 +6,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useUserStore } from '../store/userStore';
 
 interface CourseCardProps {
-  course?: Course; // Додаємо можливість, що course може бути undefined
+  course?: Course; // Optional course prop
 }
 
 export const CourseCard = ({ course }: CourseCardProps) => {
@@ -13,9 +14,12 @@ export const CourseCard = ({ course }: CourseCardProps) => {
   const currentUser = useUserStore((state) => state.currentUser);
   const navigate = useNavigate();
 
-  // Перевіряємо, чи є дані, якщо ні — повертаємо заглушку
   if (!course) {
-    return <div className="p-6 rounded-2xl border bg-gray-100 text-gray-600">Loading course...</div>;
+    return (
+      <div className="p-6 rounded-2xl border bg-gray-100 text-gray-600">
+        Loading course...
+      </div>
+    );
   }
 
   const handleClick = (e: React.MouseEvent) => {
@@ -27,15 +31,15 @@ export const CourseCard = ({ course }: CourseCardProps) => {
     navigate(`/course/${course.id}`);
   };
 
-  // Мапінг кольорів для категорій
   const categoryColors: Record<string, string> = {
     'IT & Software': 'bg-pink-100',
     'Business': 'bg-orange-100',
     'Design': 'bg-blue-100',
     'Marketing': 'bg-green-100',
   };
-  
+
   const categoryColor = categoryColors[course.category] || 'bg-purple-100';
+  const instructorsList = Array.isArray(course.instructors) ? course.instructors : [];
 
   return (
     <div onClick={handleClick} className="cursor-pointer">
@@ -57,7 +61,7 @@ export const CourseCard = ({ course }: CourseCardProps) => {
             {(course.students ?? 0).toLocaleString()} students
           </span>
           <div className="flex -space-x-2">
-            {(course.instructors ?? []).map((_, idx) => (
+            {instructorsList.map((_, idx) => (
               <div
                 key={idx}
                 className="w-8 h-8 rounded-full bg-gray-300 border-2 border-white"
@@ -69,3 +73,5 @@ export const CourseCard = ({ course }: CourseCardProps) => {
     </div>
   );
 };
+
+

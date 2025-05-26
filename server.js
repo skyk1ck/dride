@@ -11,303 +11,622 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import dotenv from 'dotenv';
 
-// Create an express app
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const app = express();
-const uploadDir = path.join(__dirname, 'uploads');
-
-// Create the server and attach Socket.IO
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: 'http://localhost:5173', // Allow requests from your frontend
+    origin: 'http://localhost:5173',
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type'],
     credentials: true,
   }
 });
 
-// Middleware
+const uploadDir = path.join(__dirname, 'uploads');
 app.use(cors({
-  origin: 'http://localhost:5173', // Allow requests from your frontend
-  methods: ['GET', 'POST', 'DELETE'], // Allow DELETE method
+  origin: 'http://localhost:5173',
+  methods: ['GET', 'POST', 'DELETE'],
   credentials: true,
 }));
 app.use(bodyParser.json());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Set up database connection
 const db = mysql.createConnection({
   host: 'localhost',
-  user: 'root', // MySQL username
-  password: '', // MySQL password
+  user: 'root',
+  password: '',
   database: 'education_platform',
 });
 
-// File upload setup
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
+db.connect((err) => {
+  if (err) {
+    console.error('Error connecting to MySQL:', err);
+    process.exit(1);
   }
+  console.log('Connected to MySQL.');
 });
-const upload = multer({ storage });
 
-// Create uploads directory if not exists
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-// Connect to MySQL database
-db.connect((err) => {
-  if (err) {
-    console.error('Error connecting to the MySQL database:', err);
-    process.exit(1); // Exit if the DB connection fails
-  }
-  console.log('Connected to the MySQL database.');
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
 
-// Helper functions for JWT generation and authentication
-const generateToken = (id, isAdmin = false) => {
-  return jwt.sign({ id, isAdmin }, 'your-secret-key', { expiresIn: '7d' });
+const upload = multer({ storage });
+
+dotenv.config();
+
+// JWT Token Generation
+const generateToken = (user) => {
+  console.log('Generating token for user:', user);
+
+  const payload = {
+    id: user.id,
+    role: user.role,
+    username: user.username,
+    email: user.email,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60),  
+  };
+
+  console.log('Payload:', payload);
+
+  const secret = process.env.JWT_SECRET;
+
+  const token = jwt.sign(payload, secret);
+
+  console.log('Generated Token:', token);
+
+  return token;
 };
 
-const authenticateJWT = (req, res, next) => {
-  const token = req.headers['authorization'];
 
-  if (!token || !token.startsWith('Bearer ')) {
-    return res.status(401).json({
-      message: 'Token is missing or malformed. Please provide a valid token.',
-    });
+const authenticateJWT = (req, res, next) => {
+  const token = req.headers['authorization']?.split(' ')[1];
+  console.log('Auth header:', req.headers['authorization']);
+  console.log('Extracted token:', token);
+
+  if (!token) {
+    console.log('No token found');
+    return res.status(401).json({ message: 'Access denied, no token provided' });
   }
 
-  const actualToken = token.split(' ')[1]; // Extract token after 'Bearer '
+  const secret = process.env.JWT_SECRET || 'fallbackSecret';
 
-  // Verify the token
-  jwt.verify(actualToken, 'your-secret-key', (err, user) => {
+  jwt.verify(token, secret, (err, decoded) => {
     if (err) {
-      console.log('Invalid token:', err);
-      return res.status(403).json({
-        message: 'Invalid token. Please provide a valid token.',
-      });
+      console.log('Token verification error:', err);
+      return res.status(403).json({ message: 'Invalid or expired token' });
     }
-    req.user = user; // Attach user info to the request object
-    next(); // Continue to the next middleware
+
+    req.user = decoded;
+    console.log('Token verified successfully. User:', decoded);
+    next();
   });
 };
 
-// Users fetch (for admin access only)
-app.get('/api/users', authenticateJWT, async (req, res) => {
-  if (!req.user.isAdmin) {
-    return res.status(403).json({ error: 'Permission denied' });
+
+
+
+const checkRole = (...allowedRoles) => {
+  return (req, res, next) => {
+    const user = req.user; 
+
+    if (!user || !user.role) {
+      return res.status(400).json({ message: 'User role is missing or user is not authenticated' });
+    }
+
+    if (!allowedRoles.includes(user.role)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    next();  
+  };
+};
+
+
+
+app.post('/api/register', async (req, res) => {
+  const { username, email, password, role = 'user' } = req.body;
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: 'All fields required' });
+  }
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [existing] = await db.promise().query('SELECT id FROM users WHERE username = ?', [username]);
+    if (existing.length) return res.status(409).json({ message: 'Username exists' });
+
+    const [result] = await db.promise().query(
+      'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
+      [username, email, hashedPassword, role]
+    );
+    const token = generateToken(result.insertId, role);
+    res.status(201).json({ message: 'Registered', token });
+  } catch (err) {
+    res.status(500).json({ message: 'Registration error' });
+  }
+});
+
+
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required' });
   }
 
   try {
-    const [users] = await db.promise().query('SELECT id, username, email, created_at FROM users');
-    res.status(200).json(users); // Send users data in the response
+    
+    const [users] = await db.promise().query('SELECT * FROM users WHERE username = ?', [username]);
+
+    
+    if (!users.length) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const user = users[0];
+
+   
+    const valid = await bcrypt.compare(password, user.password);
+
+   
+    if (!valid) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Generate a JWT token
+    const token = generateToken(user);
+    
+    // Respond with the success message, token, and user data
+    res.status(200).json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
   } catch (err) {
-    console.error('Error fetching users:', err);
+    console.error('Login error:', err); 
+    res.status(500).json({ message: 'Login error' });
+  }
+});
+
+
+
+app.get('/api/users', authenticateJWT, checkRole('admin'), async (req, res) => {
+  try {
+    const [users] = await db.promise().query('SELECT id, username, email, role, created_at FROM users');
+    res.status(200).json(users);
+  } catch (err) {
     res.status(500).json({ error: 'Error fetching users' });
   }
 });
 
-// Register user route
-app.post('/api/register', async (req, res) => {
-  const { username, email, password } = req.body;
-  const hashedPassword = await bcrypt.hash(password, 10);
 
-  db.query('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword], (err, result) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send('Error registering user');
-    }
-    const token = generateToken(result.insertId);
-    res.status(201).json({ message: 'User registered successfully', token });
-  });
-});
-
-// Login user route
-app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
-
-  db.query('SELECT * FROM users WHERE username = ?', [username], async (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).send('Error logging in');
-    }
-    if (results.length === 0) {
-      return res.status(404).send('User not found');
-    }
-
-    const user = results[0];
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
-      return res.status(400).send('Invalid credentials');
-    }
-
-    const token = generateToken(user.id, user.isAdmin); // Pass user.isAdmin flag
-    res.status(200).json({ message: 'Login successful', token, user });
-  });
-});
-
-// Fetch all news articles
 app.get('/api/news', async (req, res) => {
   try {
     const [news] = await db.promise().query('SELECT * FROM news ORDER BY created_at DESC');
     res.json(news);
   } catch (err) {
-    console.error('Error fetching news:', err);
     res.status(500).json({ error: 'Error fetching news' });
   }
 });
 
-// Add a new news article
-app.post('/api/news', authenticateJWT, async (req, res) => {
+
+app.post('/api/news', async (req, res) => {
   const { title, content } = req.body;
 
   if (!title || !content) {
-    return res.status(400).json({ error: 'Both title and content are required' });
+    console.error('[API] Missing title or content.');
+    return res.status(400).json({ error: 'Title and content required' });
   }
 
   try {
-    const query = 'INSERT INTO news (title, content) VALUES (?, ?)';
-    const [result] = await db.promise().query(query, [title, content]);
-    res.status(201).json({ message: 'News added successfully', id: result.insertId });
+    console.log('[API] Received news data:', { title, content });
+
+    const [result] = await db.promise().query(
+      'INSERT INTO news (title, content) VALUES (?, ?)',
+      [title, content]
+    );
+
+    console.log('[API] News added with ID:', result.insertId); 
+    res.status(201).json({ message: 'News added', id: result.insertId });
   } catch (err) {
-    console.error('Error adding news:', err);
+    // Log the error details, including SQL error specifics
+    console.error('[API] Error adding news:', err);
+
+    if (err.sqlMessage) {
+      console.error('[API] SQL Error Message:', err.sqlMessage);
+      console.error('[API] SQL State:', err.sqlState);
+      console.error('[API] SQL Code:', err.code);
+    } else {
+      console.error('[API] General Error:', err.message);
+    }
+
     res.status(500).json({ error: 'Error adding news' });
   }
 });
 
-// POST request to save a new chat message
-app.post('/api/chat_messages', authenticateJWT, async (req, res) => {
-  const { message } = req.body; // The message content sent by the client
-  const { user_id } = req.user || {}; // Get the user_id from the authenticated user (if any)
 
-  if (!message || !message.trim()) {
-    return res.status(400).json({ error: 'Message cannot be empty' });
-  }
 
-  try {
-    // Insert the message into the chat_messages table
-    const query = 'INSERT INTO chat_messages (user_id, message) VALUES (?, ?)';
-    const [result] = await db.promise().query(query, [user_id || null, message.trim()]);
 
-    // Respond with the saved message and its details
-    res.status(201).json({
-      message: 'Chat message saved successfully',
-      data: {
-        id: result.insertId,
-        user_id: user_id || null, // If the user is a guest, user_id will be null
-        message: message.trim(),
-        created_at: new Date().toISOString(),
-      },
-    });
 
-    // Emit the new message to all connected clients via socket
-    io.emit('message', {
-      id: result.insertId,
-      user_id: user_id || null,
-      message: message.trim(),
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('Error saving message:', err);
-    res.status(500).json({ error: 'Error saving chat message' });
-  }
-});
 
-// Delete a news article
-app.delete('/api/news/:id', authenticateJWT, async (req, res) => {
+
+app.delete('/api/news/:id', async (req, res) => {
   const { id } = req.params;
-
-  if (!req.user.isAdmin) {
-    return res.status(403).send('Permission denied');
-  }
-
   try {
-    const result = await db.promise().query('DELETE FROM news WHERE id = ?', [id]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'News item not found' });
-    }
-    res.status(200).json({ message: 'News deleted successfully' });
+    const [result] = await db.promise().query('DELETE FROM news WHERE id = ?', [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'News not found' });
+    res.json({ message: 'News deleted' });
   } catch (err) {
-    console.error('Error deleting news:', err);
     res.status(500).json({ error: 'Error deleting news' });
   }
 });
 
-// Fetch courses with optional category filter
-app.get('/api/courses', async (req, res) => {
-  const { category } = req.query; // Get category from query parameter
-  
-  try {
-    let query = 'SELECT * FROM courses';
-    let queryParams = [];
 
-    if (category) {
-      query += ' WHERE category = ?';
-      queryParams.push(category);
+
+app.get('/api/courses', async (req, res) => {
+  try {
+   
+    const [courses] = await db.promise().query('SELECT * FROM courses');
+
+    if (courses.length === 0) {
+      return res.status(404).json({ message: 'No courses found' });
     }
 
-    query += ' ORDER BY created_at DESC';
-
-    const [courses] = await db.promise().query(query, queryParams);
+    
     res.status(200).json(courses);
   } catch (err) {
     console.error('Error fetching courses:', err);
-    res.status(500).json({ error: 'Error fetching courses' });
+    res.status(500).json({ message: 'Error fetching courses' });
   }
 });
 
-// Add a new course (with category and video_url)
-app.post('/api/courses', authenticateJWT, async (req, res) => {
-  const { title, description, category, video_url } = req.body;
+app.post('/api/courses', authenticateJWT, checkRole('admin'), async (req, res) => {
+  const { title, category, description, video_url, syllabus, instructors } = req.body;
 
-  if (!title || !description || !category || !video_url) {
-    return res.status(400).json({ error: 'Title, description, category, and video_url are required' });
+  // Validate required fields
+  if (!title || !category || !description || !video_url || !syllabus || !instructors) {
+    return res.status(400).json({ message: 'All fields are required.' });
   }
 
   try {
-    const query = 'INSERT INTO courses (title, description, category, video_url) VALUES (?, ?, ?, ?)';
-    const [result] = await db.promise().query(query, [title, description, category, video_url]);
-    res.status(201).json({ message: 'Course added successfully', id: result.insertId });
-  } catch (err) {
-    console.error('Error adding course:', err);
-    res.status(500).json({ error: 'Error adding course' });
+   
+    const [result] = await db.promise().query(
+      'INSERT INTO courses (title, category, description, video_url, syllabus, instructors) VALUES (?, ?, ?, ?, ?, ?)',
+      [title, category, description, video_url, syllabus, instructors]
+    );
+
+   
+    res.status(201).json({
+      message: 'Course created successfully',
+      courseId: result.insertId
+    });
+  } catch (error) {
+    console.error('Error creating course:', error);
+    res.status(500).json({ message: 'Error creating course' });
   }
 });
 
-// Delete a course
-app.delete('/api/courses/:id', authenticateJWT, async (req, res) => {
-  const { id } = req.params;
 
-  if (!req.user.isAdmin) {
-    return res.status(403).send('Permission denied');
-  }
+
+
+
+
+
+app.delete('/api/courses/:id', async (req, res) => {
+  const courseId = req.params.id;
 
   try {
-    const result = await db.promise().query('DELETE FROM courses WHERE id = ?', [id]);
+    const [result] = await db.promise().query('DELETE FROM courses WHERE id = ?', [courseId]);
+
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Course not found' });
+      return res.status(404).json({ message: 'Course not found' });
     }
+
     res.status(200).json({ message: 'Course deleted successfully' });
   } catch (err) {
     console.error('Error deleting course:', err);
-    res.status(500).json({ error: 'Error deleting course' });
+    res.status(500).json({ message: 'Error deleting course' });
   }
 });
 
-// Starting the server
+
+app.get('/api/courses/:id', async (req, res) => {
+  const courseId = req.params.id;
+
+  try {
+    const [course] = await db.promise().query('SELECT * FROM courses WHERE id = ?', [courseId]);
+
+    if (course.length === 0) {
+      return res.status(404).json({ message: 'Course not found' });
+    }
+
+    res.status(200).json(course[0]);
+  } catch (err) {
+    console.error('Error fetching course:', err);
+    res.status(500).json({ message: 'Error fetching course' });
+  }
+});
+app.post('/api/courses/:id/comments', (req, res) => {
+  const courseId = req.params.id;
+  const { username, text } = req.body;
+});
+
+app.get('/api/courses/:id/comments', async (req, res) => {
+  const courseId = req.params.id;
+
+  try {
+    const [comments] = await db.promise().query('SELECT * FROM comments WHERE course_id = ?', [courseId]);
+
+    res.status(200).json(comments);
+  } catch (err) {
+    console.error('Error fetching course comments:', err);
+    res.status(500).json({ message: 'Error fetching course comments' });
+  }
+});
+app.post('/api/courses/:courseId/rate', authenticateJWT, (req, res) => {
+  const { courseId } = req.params;
+  const { rating } = req.body;
+
+  if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+    return res.status(400).json({ error: 'Rating must be a number between 1 and 5.' });
+  }
+
+  const course = courses.find(course => course.id === parseInt(courseId));
+  if (!course) {
+    return res.status(404).json({ error: 'Course not found' });
+  }
+
+  course.ratings.push(rating);
+  course.rating = course.ratings.reduce((sum, r) => sum + r, 0) / course.ratings.length;
+
+  res.status(200).json({ courseId: course.id, newRating: course.rating });
+});
+
+
+app.get('/api/courses/:id/saved', authenticateJWT, async (req, res) => {
+  const courseId = parseInt(req.params.id);
+  const userId = req.user.id;
+
+  console.log(`Checking saved status for user ${userId} and course ${courseId}`);
+
+  try {
+    const [rows] = await db.promise().query(
+      'SELECT * FROM saved_courses WHERE user_id = ? AND course_id = ?',
+      [userId, courseId]
+    );
+
+    console.log('Query result:', rows);
+
+    res.json({ saved: rows.length > 0 });
+  } catch (error) {
+    console.error('Error checking saved status:', error);
+    res.status(500).json({ message: 'Error checking saved status' });
+  }
+});
+
+app.get('/api/courses/:id/saved-count', async (req, res) => {
+  const courseId = parseInt(req.params.id);
+
+  try {
+    const [rows] = await db.promise().query(
+      'SELECT COUNT(*) AS count FROM saved_courses WHERE course_id = ?',
+      [courseId]
+    );
+
+    res.json({ count: rows[0].count });
+  } catch (error) {
+    console.error('Error getting saved count:', error);
+    res.status(500).json({ message: 'Error getting saved count' });
+  }
+});
+
+app.get('/api/users/saved-courses', authenticateJWT, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT courses.* 
+       FROM saved_courses 
+       JOIN courses ON saved_courses.course_id = courses.id 
+       WHERE saved_courses.user_id = ?`,
+      [userId]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching saved courses:', error);
+    res.status(500).json({ message: 'Error fetching saved courses' });
+  }
+});
+
+
+app.post('/api/courses/:id/save', authenticateJWT, async (req, res) => {
+  const courseId = parseInt(req.params.id);
+  const userId = req.user.id;  
+
+  try {
+    const [course] = await db.promise().query('SELECT * FROM courses WHERE id = ?', [courseId]);
+    if (course.length === 0) {
+      return res.status(404).send('Course not found');
+    }
+
+    const [user] = await db.promise().query('SELECT * FROM users WHERE id = ?', [userId]);
+    if (user.length === 0) {
+      return res.status(404).send('User not found');
+    }
+
+    const [existingSavedCourse] = await db.promise().query(
+      'SELECT * FROM saved_courses WHERE user_id = ? AND course_id = ?',
+      [userId, courseId]
+    );
+    if (existingSavedCourse.length > 0) {
+      return res.status(400).json({ message: 'Course already saved' });
+    }
+
+    await db.promise().query(
+      'INSERT INTO saved_courses (user_id, course_id) VALUES (?, ?)',
+      [userId, courseId]
+    );
+
+    return res.status(200).json({ message: 'Course saved successfully' });
+
+  } catch (err) {
+    console.error('Error saving course:', err);
+    res.status(500).json({ message: 'Error saving course' });
+  }
+});
+app.delete('/api/courses/:id/save', authenticateJWT, async (req, res) => {
+  const courseId = parseInt(req.params.id);
+  const userId = req.user.id;
+
+  try {
+    const [result] = await db.promise().query(
+      'DELETE FROM saved_courses WHERE user_id = ? AND course_id = ?',
+      [userId, courseId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Course not saved' });
+    }
+
+    res.status(200).json({ message: 'Course unsaved successfully' });
+  } catch (err) {
+    console.error('Error unsaving course:', err);
+    res.status(500).json({ message: 'Error unsaving course' });
+  }
+});
+
+
+
+app.post('/api/courses/:id/enroll', authenticateJWT, async (req, res) => {
+  const courseId = req.params.id;
+  const userId = req.user.id;
+
+  try {
+    const [existing] = await db.promise().query(
+      'SELECT * FROM enrolled_courses WHERE user_id = ? AND course_id = ?',
+      [userId, courseId]
+    );
+    if (existing.length) {
+      return res.status(400).json({ message: 'Already enrolled in this course' });
+    }
+
+    await db.promise().query(
+      'INSERT INTO enrolled_courses (user_id, course_id) VALUES (?, ?)',
+      [userId, courseId]
+    );
+
+    res.status(201).json({ message: 'Successfully enrolled in course' });
+  } catch (err) {
+    console.error('Error enrolling in course:', err);
+    res.status(500).json({ error: 'Error enrolling in course' });
+  }
+});
+
+
+app.post('/api/courses/:id/unenroll', authenticateJWT, async (req, res) => {
+  const courseId = req.params.id;
+  const userId = req.user.id;
+
+  try {
+    const [result] = await db.promise().query(
+      'DELETE FROM enrolled_courses WHERE user_id = ? AND course_id = ?',
+      [userId, courseId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Enrollment not found' });
+    }
+
+    res.json({ message: 'Successfully unenrolled from course' });
+  } catch (err) {
+    console.error('Error unenrolling from course:', err);
+    res.status(500).json({ error: 'Error unenrolling from course' });
+  }
+});
+
+
+
+app.get('/api/chat_messages', async (req, res) => {
+  try {
+    const [messages] = await db.promise().query(`
+      SELECT chat_messages.*, users.username, users.avatar
+      FROM chat_messages
+      LEFT JOIN users ON chat_messages.user_id = users.id
+      ORDER BY chat_messages.created_at ASC
+    `);
+    res.status(200).json({ success: true, data: messages });
+  } catch (err) {
+    console.error('Error fetching chat messages:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch messages' });
+  }
+});
+
+app.post('/api/chat_messages', async (req, res) => {
+  const { message } = req.body;
+  
+  const user_id = req.user?.id || null; 
+
+  // Validate message
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Empty message' });
+  }
+
+  try {
+   
+    const [result] = await db.promise().query(
+      'INSERT INTO chat_messages (user_id, message) VALUES (?, ?)', 
+      [user_id, message.trim()]
+    );
+
+    
+    const [rows] = await db.promise().query(
+      `SELECT chat_messages.*, users.username, users.avatar 
+       FROM chat_messages 
+       LEFT JOIN users ON chat_messages.user_id = users.id 
+       WHERE chat_messages.id = ?`, [result.insertId]
+    );
+
+    const newMsg = rows[0];
+
+    
+    io.emit('message', newMsg);
+
+    
+    res.status(201).json({ message: 'Message saved', data: newMsg });
+  } catch (err) {
+    console.error('Error saving message:', err);
+    res.status(500).json({ error: 'Error saving message' });
+  }
+});
+
+
+
+
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
+
+
+
+
+
 
 
 

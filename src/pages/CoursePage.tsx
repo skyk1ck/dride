@@ -1,126 +1,110 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Star, BookmarkPlus, BookmarkMinus } from 'lucide-react';
+import { Star, BookmarkPlus } from 'lucide-react';
 import { useCourseStore } from '../store/courseStore';
 import { useUserStore } from '../store/userStore';
 import axios from 'axios';
+import config from '../components/config';
 
 export const CoursePage = () => {
+  const API_URL = config.API_URL;
   const { id } = useParams();
-  const { courses, updateRating } = useCourseStore();
-  const { currentUser, saveCourse, unsaveCourse, rateCourse, enrollCourse } = useUserStore();
-  const [course, setCourse] = useState(null);
-  const [comments, setComments] = useState([]);
+  const { courses, updateRating, fetchCourses } = useCourseStore();
+  const { currentUser, enrollCourse } = useUserStore();
+  const [course, setCourse] = useState<any | null>(null);
+  const [comments, setComments] = useState<any[]>([]);
   const [comment, setComment] = useState('');
   const [isCourseSaved, setIsCourseSaved] = useState(false);
   const [isEnrolled, setIsEnrolled] = useState(false);
-
-  // Retrieve the token dynamically from localStorage
-  const token = localStorage.getItem('authToken'); // Use the token stored during login
+  const [savedCount, setSavedCount] = useState<number>(0);
 
   useEffect(() => {
-    if (!token) return; // If there's no token, don't fetch data
-
-    // Fetch course data
-    axios.get(`http://localhost:5000/api/courses/${id}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
+    const fetchData = async () => {
+      if (!courses.length) {
+        await fetchCourses();
       }
-    })
-      .then(response => {
-        setCourse(response.data);
-      })
-      .catch(error => console.error('Error fetching course data:', error));
 
-    // Fetch course comments
-    axios.get(`http://localhost:5000/api/courses/${id}/comments`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
+      let currentCourse = courses.find((c) => c.id === parseInt(id));
+      if (!currentCourse) {
+        const response = await axios.get(`${API_URL}/courses/${id}`);
+        currentCourse = response.data;
       }
-    })
-      .then(response => {
-        setComments(response.data);
-      })
-      .catch(error => console.error('Error fetching comments:', error));
 
-    // Check if the course is saved and if the user is enrolled
-    if (currentUser) {
-      // Check saved status
-      axios.get(`http://localhost:5000/api/courses/${id}/saved`, {
-        params: { userId: currentUser.id },
-        headers: {
-          'Authorization': `Bearer ${token}`,
+      setCourse(currentCourse);
+
+      if (currentUser?.token) {
+        try {
+          const savedRes = await axios.get(`${API_URL}/courses/${id}/saved`, {
+            headers: {
+              Authorization: `Bearer ${currentUser.token}`,
+            },
+          });
+          setIsCourseSaved(savedRes.data.saved);
+        } catch (err) {
+         
         }
-      })
-        .then(response => {
-          setIsCourseSaved(response.data.saved);
-        })
-        .catch(error => console.error('Error checking saved status:', error));
-
-      // Check enrollment status
-      axios.get(`http://localhost:5000/api/courses/${id}/enrolled`, {
-        params: { userId: currentUser.id },
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
-      })
-        .then(response => {
-          setIsEnrolled(response.data.enrolled);
-        })
-        .catch(error => console.error('Error checking enrollment status:', error));
-    }
-  }, [id, currentUser, token]);  // Ensure that `token` changes trigger the effect
-
-  const handleSaveToggle = () => {
-    if (currentUser) {
-      if (isCourseSaved) {
-        // Unsave course
-        axios.post(`http://localhost:5000/api/courses/${id}/unsave`, { userId: currentUser.id }, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          }
-        })
-          .then(() => setIsCourseSaved(false))
-          .catch(error => console.error('Error unsaving course:', error));
-      } else {
-        // Save course
-        axios.post(`http://localhost:5000/api/courses/${id}/save`, { userId: currentUser.id }, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          }
-        })
-          .then(() => setIsCourseSaved(true))
-          .catch(error => console.error('Error saving course:', error));
       }
+
+      try {
+        const savedCountRes = await axios.get(`${API_URL}/courses/${id}/saved-count`);
+        setSavedCount(savedCountRes.data.count);
+      } catch (err) {
+       
+      }
+    };
+
+    fetchData();
+  }, [id, currentUser, courses]);
+
+  const handleSaveToggle = async (courseId: number) => {
+    const token = useUserStore.getState().getAuthToken();
+
+    if (!token) return;
+
+    try {
+      await axios.post(`${API_URL}/courses/${courseId}/save`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setIsCourseSaved(true);
+      setSavedCount(prev => prev + 1);
+    } catch (error: any) {
+    
     }
   };
 
-  const handleRating = (rating) => {
-    if (currentUser && course.id) {
-      rateCourse(course.id, rating);
+  const handleRating = (rating: number) => {
+    if (currentUser && course?.id) {
       updateRating(course.id, rating);
+      axios.post(
+        `${API_URL}/courses/${course.id}/rate`,
+        { rating },
+        { headers: { Authorization: `Bearer ${currentUser.token}` } }
+      ).catch(() => {
+        
+      });
     }
   };
 
   const handleEnroll = () => {
-    if (currentUser && course.id && !isEnrolled) {
+    if (currentUser && course?.id && !isEnrolled) {
       enrollCourse(course.id);
+      setIsEnrolled(true);
     }
   };
 
   const handleComment = () => {
     if (currentUser && comment.trim()) {
-      // Post a comment
-      axios.post(`http://localhost:5000/api/courses/${id}/comments`, { username: currentUser.username, text: comment }, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
+      axios.post(`${API_URL}/courses/${id}/comments`, {
+        username: currentUser.username,
+        text: comment
       })
         .then(() => {
           setComments([...comments, { user: currentUser.username, text: comment }]);
           setComment('');
         })
-        .catch(error => console.error('Error posting comment:', error));
+        .catch(() => {
+         
+        });
     }
   };
 
@@ -128,7 +112,7 @@ export const CoursePage = () => {
     return <div>Course not found</div>;
   }
 
-  const userRating = currentUser?.courseRatings[course.id];
+  const userRating = currentUser?.courseRatings?.[course.id];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -136,18 +120,22 @@ export const CoursePage = () => {
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-start mb-6">
             <h1 className="text-3xl font-bold">{course.title}</h1>
+
             {currentUser && (
-              <button
-                onClick={handleSaveToggle}
-                className="flex items-center gap-2 text-gray-600 hover:text-black"
-              >
-                {isCourseSaved ? (
-                  <BookmarkMinus className="w-5 h-5" />
-                ) : (
+              isCourseSaved ? (
+                <div className="flex items-center gap-2 text-green-600 font-semibold">
                   <BookmarkPlus className="w-5 h-5" />
-                )}
-                {isCourseSaved ? 'Saved' : 'Save Course'}
-              </button>
+                  This course is already saved
+                </div>
+              ) : (
+                <button
+                  onClick={() => handleSaveToggle(course.id)}
+                  className="flex items-center gap-2 text-gray-600 hover:text-black"
+                >
+                  <BookmarkPlus className="w-5 h-5" />
+                  Save Course
+                </button>
+              )
             )}
           </div>
 
@@ -160,11 +148,11 @@ export const CoursePage = () => {
               <div className="flex items-center gap-4">
                 <div>
                   <span className="text-sm font-medium text-gray-500">Rating:</span>
-                  <span className="ml-2">⭐ {course.rating.toFixed(1)}</span>
+                  <span className="ml-2">⭐ {course.rating?.toFixed(1)}</span>
                 </div>
                 <div>
                   <span className="text-sm font-medium text-gray-500">Students:</span>
-                  <span className="ml-2">{course.students.toLocaleString()}</span>
+                  <span className="ml-2">{savedCount}</span>
                 </div>
               </div>
             </div>
@@ -215,45 +203,53 @@ export const CoursePage = () => {
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">Course Content</h2>
-            <ul className="list-disc pl-6">
-              {course.syllabus.map((item, index) => (
-                <li key={index} className="mb-2">{item}</li>
+            <h2 className="text-xl font-semibold mb-4">Comments</h2>
+            <div className="space-y-4">
+              {comments.map((comment, index) => (
+                <div key={index} className="flex items-start">
+                  <span className="font-medium">{comment.user}:</span>
+                  <p className="ml-2 text-gray-700">{comment.text}</p>
+                </div>
               ))}
-            </ul>
-          </div>
+            </div>
 
-          {currentUser && (
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-semibold mb-4">Comments</h2>
-              <div className="mb-4">
+            {currentUser && (
+              <div className="mt-4">
                 <textarea
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
-                  placeholder="Write a comment..."
-                  className="w-full p-2 border rounded"
-                  rows={3}
+                  rows={4}
+                  className="w-full p-2 border rounded-lg mb-2"
+                  placeholder="Add a comment..."
                 />
                 <button
                   onClick={handleComment}
-                  className="mt-2 bg-black text-white px-4 py-2 rounded hover:bg-gray-800"
+                  className="bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-700"
                 >
                   Post Comment
                 </button>
               </div>
-              <div className="space-y-4">
-                {comments.map((comment, index) => (
-                  <div key={index} className="border-b pb-4">
-                    <p className="font-medium">{comment.user}</p>
-                    <p className="text-gray-600">{comment.text}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

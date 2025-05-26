@@ -11,6 +11,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { SavedCoursesPage } from './pages/SavedCoursesPage';
 import { NewsPage } from './pages/NewsPage';
 import { ChatPage } from './pages/ChatPage';
+
 import { useUserStore } from './store/userStore';
 import { useThemeStore } from './store/themeStore';
 import { useCourseStore } from './store/courseStore';
@@ -19,8 +20,8 @@ import { useChatStore } from './store/chatStore';
 import { useAuthStore } from './store/authStore';
 
 const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, currentUser } = useAuthStore()
-  
+  const { isAuthenticated, currentUser } = useAuthStore();
+
   if (!isAuthenticated || currentUser?.role !== 'admin') {
     return <Navigate to="/admin/login" />;
   }
@@ -29,7 +30,7 @@ const ProtectedAdminRoute = ({ children }: { children: React.ReactNode }) => {
 };
 
 const ProtectedUserRoute = ({ children }: { children: React.ReactNode }) => {
-  const currentUser = useUserStore((state) => state.currentUser); // Get current user
+  const currentUser = useUserStore((state) => state.currentUser);
   return currentUser ? <>{children}</> : <Navigate to="/user/login" />;
 };
 
@@ -41,7 +42,6 @@ function App() {
   const loadMessages = useChatStore((state) => state.loadMessages);
 
   useEffect(() => {
-    // Load all data on app initialization
     loadUsers();
     loadCourses();
     loadNews();
@@ -64,18 +64,6 @@ function App() {
         <Route path="/user/login" element={<UserLoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
 
-        {/* Protected Routes */}
-        <Route
-          path="/course/:id"
-          element={
-            <ProtectedUserRoute>
-              <Layout><CoursePage /></Layout>
-            </ProtectedUserRoute>
-          }
-        />
-        <Route path="/news" element={<Layout><NewsPage /></Layout>} />
-        <Route path="/chat" element={<Layout><ChatPage /></Layout>} />
-
         {/* Admin protected route */}
         <Route
           path="/admin"
@@ -87,6 +75,14 @@ function App() {
         />
 
         {/* Protected user routes */}
+        <Route
+          path="/course/:id"
+          element={
+            <ProtectedUserRoute>
+              <Layout><CoursePage /></Layout>
+            </ProtectedUserRoute>
+          }
+        />
         <Route
           path="/profile"
           element={
@@ -103,6 +99,9 @@ function App() {
             </ProtectedUserRoute>
           }
         />
+
+        <Route path="/news" element={<Layout><NewsPage /></Layout>} />
+        <Route path="/chat" element={<Layout><ChatPage /></Layout>} />
 
         {/* Fallback 404 route */}
         <Route path="*" element={<Navigate to="/" />} />

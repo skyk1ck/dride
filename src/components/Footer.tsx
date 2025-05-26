@@ -11,7 +11,7 @@ export const Footer = () => {
       <div className={`max-w-7xl mx-auto px-4 ${currentUser ? 'ml-20' : ''}`}>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div>
-            <h3 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-black'}`}>EduHub</h3>
+            <h3 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-black'}`}>Dride</h3>
             <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>
               Invest in your future with our comprehensive online learning platform.
             </p>
@@ -99,7 +99,7 @@ export const Footer = () => {
         </div>
         
         <div className={`border-t ${isDarkMode ? 'border-gray-800' : 'border-gray-100'} mt-12 pt-8 text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-          <p>© {new Date().getFullYear()} EduHub. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Dride. All rights reserved.</p>
         </div>
       </div>
     </footer>

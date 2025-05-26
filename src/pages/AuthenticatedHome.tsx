@@ -1,4 +1,3 @@
-// AuthenticatedHome.tsx
 import React, { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
@@ -25,7 +24,7 @@ export const AuthenticatedHome = () => {
     loadCourses();
   }, [fetchCourses]);
 
-  // Filter courses based on selected category
+  
   const filteredCourses = selectedCategory === 'All'
     ? courses
     : courses.filter((course) => course.category === selectedCategory);
@@ -84,13 +83,16 @@ export const AuthenticatedHome = () => {
           <div className="text-center text-white">Loading courses...</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredCourses.map((course, index) => (
-              <CourseCard key={course.id ?? index} course={course} />
-            ))}
+            {filteredCourses.map((course, index) => {
+              const key = course.id && course.name ? `${course.id}-${course.name}` : `${index}`;
+
+              return <CourseCard key={key} course={course} />;
+            })}
           </div>
         )}
       </div>
     </div>
   );
 };
+
 

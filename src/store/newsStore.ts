@@ -1,81 +1,152 @@
 import { create } from 'zustand';
-import { News } from '../types';
-import { SecureStorage } from '../lib/storage';
-import { useAuthStore } from './authStore'; // Import the auth store to check user authentication
+import axios from 'axios';
+import { useAuthStore } from './authStore'; 
 
-interface NewsState {
+interface News {
+  id: string;
+  title: string;
+  content: string;
+  date: string;
+}
+
+interface NewsStore {
   news: News[];
-  addNews: (news: Omit<News, 'id' | 'date'>) => Promise<void>;
+  addNews: (newNews: News) => Promise<void>;
   deleteNews: (id: string) => Promise<void>;
   loadNews: () => Promise<void>;
-  setNews: (news: News[]) => void; // Added setNews method to directly update the state
+  setNews: (news: News[]) => void;
+  setError: (error: string | null) => void; 
   error: string | null;
 }
 
-export const useNewsStore = create<NewsState>((set, get) => ({
+export const useNewsStore = create<NewsStore>((set) => ({
   news: [],
   error: null,
+  setError: (error: string | null) => set({ error }),
 
-  // Loads news from secure storage and updates the state
+  setNews: (news: News[]) => set({ news }),
+
+  addNews: async (newNews: News) => {
+    const token = useAuthStore.getState().getAuthToken();
+    console.log('Token:', token);  
+  
+    if (!token) {
+      const errorMsg = 'No auth token available';
+      set({ error: errorMsg });  
+      console.error('[NewsStore] ' + errorMsg);
+      throw new Error(errorMsg);
+    }
+  
+    console.log('[NewsStore] Token found:', token);
+  
+    const isAdmin = useAuthStore.getState().verifyAdminRole();
+    console.log('Is Admin:', isAdmin);  
+  
+    if (!isAdmin) {
+      const errorMsg = 'You do not have permission to add news';
+      set({ error: errorMsg });  
+      console.error('[NewsStore] ' + errorMsg);
+      throw new Error(errorMsg);
+    }
+  
+    try {
+      console.log('[NewsStore] Attempting to add news:', newNews);
+  
+      const response = await axios.post('http://localhost:5000/api/news', newNews, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+  
+      console.log('[NewsStore] News added successfully:', response.data);
+  
+      
+      set((state) => ({ news: [...state.news, response.data] }));
+      set({ error: null });  
+    } catch (error: any) {
+      
+      console.error('[NewsStore] Error adding news:', error);
+      
+      const errorMessage = error.response
+        ? `API Error: ${error.response.data?.error || error.message}`
+        : `Network Error: ${error.message}`;
+      
+      console.error('[NewsStore] Error Message:', errorMessage);
+  
+      if (error.response) {
+        console.error('[NewsStore] Response Error Details:', error.response.data);
+        console.error('[NewsStore] Status:', error.response.status);
+      }
+  
+      set({ error: errorMessage });  
+    }
+  },
+
+  
+  deleteNews: async (id: string) => {
+    const token = useAuthStore.getState().getAuthToken();
+    
+    if (!token) {
+      set({ error: 'No auth token available' });
+      console.error('[NewsStore] No auth token available for delete operation');
+      throw new Error('No auth token available');
+    }
+
+    
+    const isAdmin = useAuthStore.getState().verifyAdminRole();
+    
+    if (!isAdmin) {
+      set({ error: 'You do not have permission to delete news' });
+      console.error('[NewsStore] User does not have admin permissions to delete news');
+      throw new Error('User is not an admin');
+    }
+
+    try {
+      
+      set((state) => ({ news: state.news.filter((item) => item.id !== id) }));
+
+      await axios.delete(`http://localhost:5000/api/news/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      console.log('[NewsStore] News deleted successfully');
+      set({ error: null }); 
+    } catch (error: any) {
+      const errorMessage = error.response
+        ? `API Error: ${error.response.data?.message || error.message}`
+        : `Network Error: ${error.message}`;
+
+      console.error('[NewsStore] Error deleting news:', errorMessage);
+      set({ error: errorMessage }); 
+    }
+  },
+
+  
   loadNews: async () => {
-    const token = useAuthStore.getState().getAuthToken(); // Check for authentication token
-    if (!token) {
-      set({ error: 'User is not authenticated' });
-      return;
-    }
-
-    try {
-      const news = await SecureStorage.getData('news') || [];
-      set({ news });
-    } catch (error) {
-      set({ error: 'Failed to load news' });
-    }
-  },
-
-  // Adds a new news item to the state and secure storage
-  addNews: async (news) => {
     const token = useAuthStore.getState().getAuthToken();
+    
     if (!token) {
-      set({ error: 'User is not authenticated' });
-      return;
     }
 
     try {
-      const { news: currentNews } = get();
-      const newNews = {
-        ...news,
-        id: Date.now().toString(),
-        date: new Date().toISOString(),
-      };
+      const response = await axios.get('http://localhost:5000/api/news', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      const updatedNews = [...currentNews, newNews];
-      await SecureStorage.setData('news', updatedNews);
-      set({ news: updatedNews });
-    } catch (error) {
-      set({ error: 'Failed to add news' });
+      set({ news: response.data });
+      set({ error: null }); 
+    } catch (error: any) {
+      const errorMessage = error.response
+        ? `API Error: ${error.response.data?.message || error.message}`
+        : `Network Error: ${error.message}`;
+
+      console.error('[NewsStore] Error loading news:', errorMessage);
+      set({ error: errorMessage }); 
     }
-  },
-
-  // Deletes a news item from the state and secure storage
-  deleteNews: async (id) => {
-    const token = useAuthStore.getState().getAuthToken();
-    if (!token) {
-      set({ error: 'User is not authenticated' });
-      return;
-    }
-
-    try {
-      const { news } = get();
-      const updatedNews = news.filter((item) => item.id !== id);
-      await SecureStorage.setData('news', updatedNews);
-      set({ news: updatedNews });
-    } catch (error) {
-      set({ error: 'Failed to delete news' });
-    }
-  },
-
-  // Directly updates the news state
-  setNews: (news) => {
-    set({ news });
   },
 }));
+
+
+
+
+
